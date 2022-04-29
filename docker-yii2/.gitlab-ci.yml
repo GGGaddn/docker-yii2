@@ -1,0 +1,47 @@
+image: docker
+
+services:
+  - docker:dind
+
+stages:
+  - build
+  - test
+  - release
+
+before_script:
+  # TODO: only required on gitlab.com
+  - (apk add --no-cache py-pip git && pip install docker-compose) || true
+
+  - export ISOLATION=buildpipeline${CI_BUILD_PIPELINE}
+  - export COMPOSE_PROJECT_NAME=${ISOLATION}
+  - export APP_VERSION=$(git describe --always --dirty --tags)
+  - export PHP_IMAGE_NAME=dmstr/yii2-app
+  - export STACK_PHP_IMAGE=${PHP_IMAGE_NAME}:${APP_VERSION}
+  - export REGISTRY_PHP_IMAGE=${PHP_IMAGE_NAME}:${CI_BUILD_REF_NAME}
+  - docker info
+  - docker version
+  - docker-compose version
+  - cp .env-dist .env
+  - docker-compose build --pull
+
+after_script:
+  - docker-compose down -v
+
+test:
+  stage: test
+  script:
+    - cp config/app.env-dist config/app.env
+    - cd tests
+    - cp .env-dist .env
+    - docker-compose run --entrypoint composer forrest --prefer-dist install
+    - docker-compose run forrest run
+
+release:latest:
+  stage: release
+  script:
+    - docker tag ${STACK_PHP_IMAGE} ${REGISTRY_PHP_IMAGE}
+    - docker login --username ${REGISTRY_USERNAME} --password ${REGISTRY_PASSWORD} ${REGISTRY_HOST}
+    - docker push ${REGISTRY_PHP_IMAGE}
+  only:
+    - latest
+    - tags
